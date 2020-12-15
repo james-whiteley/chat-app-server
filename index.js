@@ -1,21 +1,28 @@
-var app = require('express')();
-var http = require('http').createServer(app);
-var io = require('socket.io')(http, { cookie: true });
-var redis = require('redis');
+const app = require('express')();
+const http = require('http').createServer(app);
+const bodyParser = require('body-parser');
+const bcrypt = require('bcrypt');
+const io = require('socket.io')(http, { cookie: true });
+const redis = require('async-redis');
+
+const SALT_ROUNDS = 10;
 
 // Create redis client
-var redisClient = redis.createClient(6379, "localhost");
+const redisClient = redis.createClient(6379, "localhost");
 
-var session = require("express-session")({
+const session = require("express-session")({
     secret: "my-secret",
     resave: true,
     saveUninitialized: true,
 		cookie: { secure: false }
 });
-var sharedsession = require("express-socket.io-session");
+const sharedsession = require("express-socket.io-session");
  
 // Use express-session middleware for express
 app.use(session);
+
+// Add support for JSON encoded request bodies
+app.use(bodyParser.json());
  
 // Use shared session middleware for socket.io
 // setting autoSave:true
@@ -70,28 +77,37 @@ function emitOnlineUserList() {
 	});
 }
 
-app.get('/', (req, res) => {
-	/* TESTING REDIS CONNECTION */
-	// Save user to redis
-	redisClient.hset('user:test-user@example.com', ['name', 'Test User', 'password', Math.random().toString(36).substring(7)], (error, reply) => {
-		if (error) {
-			console.log('error: failed to create user');
-			return;
-		}
-		console.log('success: created user ok');
-		return;
-	});
+app.post('/users', async (req, res) => {
+	var name = req.body.name;
+	var email = req.body.email;
+	var password = req.body.password;
 
-	// Getting newly created user
-	redisClient.hgetall('user:test-user@example.com', (error, user) => {
-		if (error) {
-			res.sendStatus(400);
-			return;
-		}
-		res.status(200).send(user);
-	});
+	// Check if user already exists
+	let user = await redisClient.hgetall(`user:${email}`);
+
+	if (user) {
+		res.sendStatus(409);
+		return false;
+	}
+
+	try {
+		// Generate salt to hash password
+		let salt = await bcrypt.genSalt(SALT_ROUNDS);
+
+		// Hash password before pushing to database
+		let hashedPassword = await bcrypt.hash(password, salt);
+
+		// Save user to redis
+		await redisClient.hset(`user:${email}`, ["name", name, "password", hashedPassword]);
+
+		res.sendStatus(201);
+	} catch (error) {
+		res.sendStatus(400);
+	}
+
+	return;
 });
 
-http.listen(3001, function(){
+http.listen(3001, () => {
   console.log('listening on *:3001');
 });
