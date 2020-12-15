@@ -1,6 +1,10 @@
 var app = require('express')();
 var http = require('http').createServer(app);
 var io = require('socket.io')(http, { cookie: true });
+var redis = require('redis');
+
+// Create redis client
+var redisClient = redis.createClient(6379, "localhost");
 
 var session = require("express-session")({
     secret: "my-secret",
@@ -65,6 +69,28 @@ function emitOnlineUserList() {
 		io.of('/').emit('online users', onlineUsers);
 	});
 }
+
+app.get('/', (req, res) => {
+	/* TESTING REDIS CONNECTION */
+	// Save user to redis
+	redisClient.hset('user:test-user@example.com', ['name', 'Test User', 'password', Math.random().toString(36).substring(7)], (error, reply) => {
+		if (error) {
+			console.log('error: failed to create user');
+			return;
+		}
+		console.log('success: created user ok');
+		return;
+	});
+
+	// Getting newly created user
+	redisClient.hgetall('user:test-user@example.com', (error, user) => {
+		if (error) {
+			res.sendStatus(400);
+			return;
+		}
+		res.status(200).send(user);
+	});
+});
 
 http.listen(3001, function(){
   console.log('listening on *:3001');
